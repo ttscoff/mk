@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		9388BEF22F1FB09B00281DAF /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9388BEF32F1FB09B00281DAF /* main.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXCopyFilesBuildPhase section */
 		9388BEE62F1FB09B00281DAF /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
@@ -18,14 +22,11 @@
 		};
 /* End PBXCopyFilesBuildPhase section */
 
-/* Begin PBXBuildFile section */
-		9388BEF22F1FB09B00281DAF /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9388BEF32F1FB09B00281DAF /* main.swift */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXFileReference section */
 		9388BEE82F1FB09B00281DAF /* mk */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = mk; sourceTree = BUILT_PRODUCTS_DIR; };
 		9388BEF32F1FB09B00281DAF /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		9388BEF52F1FB09B00281DAF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		9388BEF72F1FB09C00281DAF /* mk.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = mk.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -43,6 +44,7 @@
 			isa = PBXGroup;
 			children = (
 				9388BEF62F1FB09B00281DAF /* mk */,
+				9388BEF72F1FB09C00281DAF /* mk.entitlements */,
 				9388BEE92F1FB09B00281DAF /* Products */,
 			);
 			sourceTree = "<group>";
@@ -255,6 +257,7 @@
 		9388BEF02F1FB09B00281DAF /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = mk.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				CURRENT_PROJECT_VERSION = 1102;
@@ -263,6 +266,7 @@
 				INFOPLIST_FILE = mk/Info.plist;
 				MARKETING_VERSION = 3.0.0;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -272,6 +276,7 @@
 		9388BEF12F1FB09B00281DAF /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = mk.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
 				CURRENT_PROJECT_VERSION = 1102;
@@ -280,6 +285,7 @@
 				INFOPLIST_FILE = mk/Info.plist;
 				MARKETING_VERSION = 3.0.0;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;

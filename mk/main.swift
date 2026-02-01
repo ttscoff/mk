@@ -215,6 +215,24 @@ func handleSTDIN() {
   }
 }
 
+// MARK: - Path Resolution
+
+/// Returns the effective working directory for resolving relative paths.
+/// Sandboxed apps get FileManager.currentDirectoryPath = container Data dir,
+/// so we prefer PWD (set by the shell) when launching from Terminal.
+func effectiveWorkingDirectory() -> String {
+  let fm = FileManager.default
+  let cwd = fm.currentDirectoryPath
+  // Prefer PWD when current dir looks like a sandbox container (doesn't reflect shell cwd)
+  if let pwd = ProcessInfo.processInfo.environment["PWD"],
+    !pwd.isEmpty,
+    cwd.contains("Containers") && cwd.contains("/Data")
+  {
+    return pwd
+  }
+  return cwd
+}
+
 // MARK: - File Handling
 
 func handleFile(_ filePath: String, raise: Bool = false) {
@@ -225,8 +243,8 @@ func handleFile(_ filePath: String, raise: Bool = false) {
   if filePath.hasPrefix("~") {
     resolvedPath = (filePath as NSString).expandingTildeInPath
   } else if !filePath.hasPrefix("/") {
-    // Relative path - make it absolute from current directory
-    let currentDir = fileManager.currentDirectoryPath
+    // Relative path - make it absolute from effective working directory
+    let currentDir = effectiveWorkingDirectory()
     resolvedPath = (currentDir as NSString).appendingPathComponent(filePath)
   }
 
@@ -412,7 +430,7 @@ func main() {
     if addStyleFile.hasPrefix("~") {
       resolvedPath = (addStyleFile as NSString).expandingTildeInPath
     } else if !addStyleFile.hasPrefix("/") {
-      let currentDir = fileManager.currentDirectoryPath
+      let currentDir = effectiveWorkingDirectory()
       resolvedPath = (currentDir as NSString).appendingPathComponent(addStyleFile)
     }
     resolvedPath = (resolvedPath as NSString).standardizingPath
