@@ -1,0 +1,230 @@
+name: Release mk
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+    env:
+      KEYCHAIN_PASSWORD: ${{ secrets.DEV_ID_KEYCHAIN_PASSWORD }}
+      CERT_PASSWORD: ${{ secrets.DEV_ID_CERT_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APP_SIGNING_IDENTITY: ${{ secrets.DEV_ID_APPLICATION_IDENTITY }}
+      INSTALLER_SIGNING_IDENTITY: ${{ secrets.DEV_ID_INSTALLER_IDENTITY }}
+      PKG_IDENTIFIER: com.brettterpstra.mk
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tarball_sha: ${{ steps.sha.outputs.tarball_sha }}
+    steps:
+      - name: Checkout mk
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(ruby -e 's=File.read("mk.xcodeproj/project.pbxproj");m=s.match(/MARKETING_VERSION = ([^;]+);/);abort("MARKETING_VERSION missing") unless m;puts m[1].strip')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "$TAG_VERSION" != "$VERSION" ]]; then
+              echo "Tag version ($TAG_VERSION) does not match MARKETING_VERSION ($VERSION)"
+              exit 1
+            fi
+          fi
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            KEYCHAIN_PASSWORD
+            CERT_PASSWORD
+            APPLE_ID
+            APPLE_TEAM_ID
+            APPLE_APP_SPECIFIC_PASSWORD
+            APP_SIGNING_IDENTITY
+            INSTALLER_SIGNING_IDENTITY
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required secret/env: $name"
+              exit 1
+            fi
+          done
+
+      - name: Set up signing keychain and import certificates
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP_CERT_PATH="$RUNNER_TEMP/dev_id_application.p12"
+          INSTALLER_CERT_PATH="$RUNNER_TEMP/dev_id_installer.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+
+          printf '%s' "${{ secrets.DEV_ID_APPLICATION_CERT_B64 }}" | base64 -D > "$APP_CERT_PATH"
+          printf '%s' "${{ secrets.DEV_ID_INSTALLER_CERT_B64 }}" | base64 -D > "$INSTALLER_CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          security import "$APP_CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security import "$INSTALLER_CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERT_PASSWORD" -T /usr/bin/pkgbuild
+
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Build universal mk binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project mk.xcodeproj \
+            -scheme mk \
+            -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/derived" \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
+
+      - name: Build artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          DIST="$PWD/dist"
+          PKGROOT="$PWD/package"
+          BIN="$RUNNER_TEMP/derived/Build/Products/Release/mk"
+
+          rm -rf "$DIST" "$PKGROOT"
+          mkdir -p "$DIST" "$PKGROOT/usr/local/bin"
+          [ -x "$BIN" ] || { echo "mk binary not found at $BIN"; exit 1; }
+
+          codesign --force --sign "$APP_SIGNING_IDENTITY" --timestamp --options runtime "$BIN"
+          codesign --verify -vvvv "$BIN"
+
+          TAR_ROOT="$DIST/mk-$VERSION-macos-universal"
+          mkdir -p "$TAR_ROOT"
+          cp "$BIN" "$TAR_ROOT/mk"
+          chmod +x "$TAR_ROOT/mk"
+          tar -C "$DIST" -czf "$DIST/mk-$VERSION-macos-universal.tar.gz" "mk-$VERSION-macos-universal"
+
+          cp "$BIN" "$PKGROOT/usr/local/bin/mk"
+          pkgbuild \
+            --root "$PKGROOT" \
+            --identifier "$PKG_IDENTIFIER" \
+            --version "$VERSION" \
+            --sign "$INSTALLER_SIGNING_IDENTITY" \
+            "$DIST/mk-$VERSION.pkg"
+
+          xcrun notarytool submit "$DIST/mk-$VERSION.pkg" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+
+          xcrun stapler staple "$DIST/mk-$VERSION.pkg"
+          xcrun stapler validate "$DIST/mk-$VERSION.pkg"
+          cp "$DIST/mk-$VERSION.pkg" "$DIST/mk.pkg"
+
+      - name: Compute checksums
+        id: sha
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          DIST="$PWD/dist"
+
+          shasum -a 256 "$DIST/mk-$VERSION-macos-universal.tar.gz" > "$DIST/mk-$VERSION-macos-universal.tar.gz.sha256"
+          shasum -a 256 "$DIST/mk-$VERSION.pkg" > "$DIST/mk-$VERSION.pkg.sha256"
+          shasum -a 256 "$DIST/mk.pkg" > "$DIST/mk.pkg.sha256"
+
+          TARBALL_SHA=$(cut -d ' ' -f 1 "$DIST/mk-$VERSION-macos-universal.tar.gz.sha256")
+          echo "tarball_sha=$TARBALL_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: mk v${{ steps.version.outputs.version }}
+          files: |
+            dist/mk-${{ steps.version.outputs.version }}-macos-universal.tar.gz
+            dist/mk-${{ steps.version.outputs.version }}-macos-universal.tar.gz.sha256
+            dist/mk-${{ steps.version.outputs.version }}.pkg
+            dist/mk-${{ steps.version.outputs.version }}.pkg.sha256
+            dist/mk.pkg
+            dist/mk.pkg.sha256
+
+  update-homebrew-formula:
+    runs-on: ubuntu-latest
+    needs: build-and-release
+    steps:
+      - name: Gate on tap token
+        id: gate
+        shell: bash
+        run: |
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "HOMEBREW_TAP_TOKEN not set; skipping formula update."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout tap repo
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ttscoff/homebrew-thelab
+          token: ${{ env.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-thelab
+
+      - name: Update mk formula
+        if: steps.gate.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.build-and-release.outputs.version }}"
+          SHA="${{ needs.build-and-release.outputs.tarball_sha }}"
+          FORMULA="homebrew-thelab/Formula/mk.rb"
+
+          ruby - "$FORMULA" "$VERSION" "$SHA" <<'RUBY'
+          formula, version, sha = ARGV
+          content = File.read(formula)
+          content.sub!(/^\s*version\s+"[^"]+"/, %(  version "#{version}"))
+          content.sub!(/^\s*sha256\s+"[^"]+"/, %(    sha256 "#{sha}"))
+          File.write(formula, content)
+          RUBY
+
+      - name: Commit and push formula
+        if: steps.gate.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd homebrew-thelab
+          if git diff --quiet Formula/mk.rb; then
+            echo "No formula changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/mk.rb
+          git commit -m "Update mk formula to v${{ needs.build-and-release.outputs.version }}"
+          git push origin HEAD:main
