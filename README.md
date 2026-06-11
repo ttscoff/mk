@@ -89,6 +89,11 @@ mk -
   without bringing Marked to the foreground (equivalent to
   `open -g`). Works best with `--refresh`, `--defaults`, and
   `--dojs` on documents already open in Marked.
+* __`mk --success TARGET`__ - Return focus after the command
+  completes. **TARGET** may be an application name (`iTerm`),
+  bundle ID (`com.googlecode.iterm2`), or URL scheme
+  (`drafts5:`). Maps to Marked's `x-success` URL handler
+  parameter.
 
 #### STDIN and Streaming
 

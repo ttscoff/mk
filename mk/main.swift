@@ -56,6 +56,7 @@ struct CommandOptions {
   var dojsFile: String? = nil  // Optional file target for --dojs
   var raise: Bool = false
   var background: Bool = false
+  var successTarget: String?
   var showUsage: Bool = false
   var showVersion: Bool = false
 }
@@ -101,6 +102,14 @@ func parseArguments() -> CommandOptions {
       options.raise = true
     case "-g", "--background":
       options.background = true
+    case "--success":
+      if i + 1 < args.count {
+        options.successTarget = args[i + 1]
+        i += 1
+      } else {
+        fputs("Error: --success requires an app name, bundle ID, or URL scheme\n", stderr)
+        exit(1)
+      }
     case "--preview":
       if i + 1 < args.count {
         options.preview = args[i + 1]
@@ -176,6 +185,40 @@ func parseArguments() -> CommandOptions {
 
 // MARK: - URL Scheme Helpers
 
+/// Resolves --success values for Marked's x-success handler (bundle ID, URL scheme, or app name).
+func resolveSuccessTarget(_ value: String) -> String {
+  let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !trimmed.isEmpty else { return trimmed }
+
+  // Full URL or custom URL scheme (e.g. ithoughts:, drafts5:, http://...)
+  if trimmed.contains("://") || trimmed.hasSuffix(":") {
+    return trimmed
+  }
+
+  // Bundle identifier (com.example.app)
+  if trimmed.contains(".") {
+    return trimmed
+  }
+
+  // Application display name (e.g. iTerm, VS Code)
+  if let appPath = NSWorkspace.shared.fullPath(forApplication: trimmed),
+    let bundle = Bundle(path: appPath),
+    let bundleID = bundle.bundleIdentifier
+  {
+    return bundleID
+  }
+
+  return trimmed
+}
+
+func parametersWithSuccess(_ parameters: [String: String], successTarget: String?) -> [String: String] {
+  var params = parameters
+  if let successTarget, !successTarget.isEmpty {
+    params["x-success"] = resolveSuccessTarget(successTarget)
+  }
+  return params
+}
+
 func buildURLScheme(command: String, parameters: [String: String] = [:]) -> URL? {
   var urlString = "x-marked-3://\(command)"
 
@@ -216,7 +259,7 @@ func openURLScheme(_ url: URL, background: Bool = false) {
 
 // MARK: - STDIN Handling
 
-func handleSTDIN(background: Bool = false) {
+func handleSTDIN(background: Bool = false, successTarget: String? = nil) {
   guard let data = try? FileHandle.standardInput.readToEnd() as NSData?,
     let dataString = String(data: data as Data, encoding: .utf8)
   else {
@@ -229,7 +272,10 @@ func handleSTDIN(background: Bool = false) {
   pb.setString(dataString, forType: .string)
 
   // Open streaming preview
-  if let streamURL = buildURLScheme(command: "stream") {
+  if let streamURL = buildURLScheme(
+    command: "stream",
+    parameters: parametersWithSuccess([:], successTarget: successTarget)
+  ) {
     openURLScheme(streamURL, background: background)
   }
 }
@@ -254,7 +300,12 @@ func effectiveWorkingDirectory() -> String {
 
 // MARK: - File Handling
 
-func handleFile(_ filePath: String, raise: Bool = false, background: Bool = false) {
+func handleFile(
+  _ filePath: String,
+  raise: Bool = false,
+  background: Bool = false,
+  successTarget: String? = nil
+) {
   let fileManager = FileManager.default
 
   // Resolve path (handles ~, relative paths, etc.)
@@ -282,7 +333,10 @@ func handleFile(_ filePath: String, raise: Bool = false, background: Bool = fals
     parameters["raise"] = "true"
   }
 
-  guard let openURL = buildURLScheme(command: "open", parameters: parameters) else {
+  guard let openURL = buildURLScheme(
+    command: "open",
+    parameters: parametersWithSuccess(parameters, successTarget: successTarget)
+  ) else {
     fputs("Error: Could not build URL scheme\n", stderr)
     exit(1)
   }
@@ -318,6 +372,7 @@ func showUsage() {
       --paste           Create new document from clipboard
       --raise           Raise window after opening (use with file argument)
       -g, --background  Deliver command without bringing Marked to the foreground
+      --success TARGET  Return focus after the command (app name, bundle ID, or URL scheme)
       --preview TEXT    Preview text directly in a new document
       --extract URL     Extract content from URL and open in Marked
       --stylestealer    Open Style Stealer HUD (optionally with URL)
@@ -335,6 +390,9 @@ func showUsage() {
       mk --stream                   Open streaming preview
       mk --refresh                  Refresh all previews
       mk --background --refresh all Refresh without focusing Marked
+      mk --success iTerm --refresh notes.md  Refresh and return focus to iTerm
+      mk --success com.googlecode.iterm2 file.md  Return focus using bundle ID
+      mk --success drafts5: --stream  Open stream and return focus via URL scheme
       mk --pref                     Open preferences
       mk --dingus                   Open Markdown Dingus
       mk --preview "Hello **world**" Preview text directly
@@ -374,7 +432,10 @@ func main() {
     }
     // If refreshFile is empty string, no params = refresh frontmost
 
-    if let url = buildURLScheme(command: "refresh", parameters: params) {
+    if let url = buildURLScheme(
+      command: "refresh",
+      parameters: parametersWithSuccess(params, successTarget: options.successTarget)
+    ) {
       openURLScheme(url, background: options.background)
     }
     exit(0)
@@ -389,35 +450,50 @@ func main() {
     }
     // If empty, params stays empty and app defaults to "General"
 
-    if let url = buildURLScheme(command: "pref", parameters: params) {
+    if let url = buildURLScheme(
+      command: "pref",
+      parameters: parametersWithSuccess(params, successTarget: options.successTarget)
+    ) {
       openURLScheme(url, background: options.background)
     }
     exit(0)
   }
 
   if options.dingus {
-    if let url = buildURLScheme(command: "dingus") {
+    if let url = buildURLScheme(
+      command: "dingus",
+      parameters: parametersWithSuccess([:], successTarget: options.successTarget)
+    ) {
       openURLScheme(url, background: options.background)
     }
     exit(0)
   }
 
   if options.paste {
-    if let url = buildURLScheme(command: "paste") {
+    if let url = buildURLScheme(
+      command: "paste",
+      parameters: parametersWithSuccess([:], successTarget: options.successTarget)
+    ) {
       openURLScheme(url, background: options.background)
     }
     exit(0)
   }
 
   if let previewText = options.preview {
-    if let url = buildURLScheme(command: "preview", parameters: ["text": previewText]) {
+    if let url = buildURLScheme(
+      command: "preview",
+      parameters: parametersWithSuccess(["text": previewText], successTarget: options.successTarget)
+    ) {
       openURLScheme(url, background: options.background)
     }
     exit(0)
   }
 
   if let extractURL = options.extract {
-    if let url = buildURLScheme(command: "extract", parameters: ["url": extractURL]) {
+    if let url = buildURLScheme(
+      command: "extract",
+      parameters: parametersWithSuccess(["url": extractURL], successTarget: options.successTarget)
+    ) {
       openURLScheme(url, background: options.background)
     }
     exit(0)
@@ -428,7 +504,10 @@ func main() {
     if !stylestealerURL.isEmpty {
       params["url"] = stylestealerURL
     }
-    if let url = buildURLScheme(command: "stylestealer", parameters: params) {
+    if let url = buildURLScheme(
+      command: "stylestealer",
+      parameters: parametersWithSuccess(params, successTarget: options.successTarget)
+    ) {
       openURLScheme(url, background: options.background)
     }
     exit(0)
@@ -439,7 +518,10 @@ func main() {
     if !importurlURL.isEmpty {
       params["url"] = importurlURL
     }
-    if let url = buildURLScheme(command: "importurl", parameters: params) {
+    if let url = buildURLScheme(
+      command: "importurl",
+      parameters: parametersWithSuccess(params, successTarget: options.successTarget)
+    ) {
       openURLScheme(url, background: options.background)
     }
     exit(0)
@@ -468,14 +550,20 @@ func main() {
     var params: [String: String] = ["file": resolvedPath]
     params["name"] = nameWithoutExt
 
-    if let url = buildURLScheme(command: "addstyle", parameters: params) {
+    if let url = buildURLScheme(
+      command: "addstyle",
+      parameters: parametersWithSuccess(params, successTarget: options.successTarget)
+    ) {
       openURLScheme(url, background: options.background)
     }
     exit(0)
   }
 
   if !options.defaultsPairs.isEmpty {
-    if let url = buildURLScheme(command: "defaults", parameters: options.defaultsPairs) {
+    if let url = buildURLScheme(
+      command: "defaults",
+      parameters: parametersWithSuccess(options.defaultsPairs, successTarget: options.successTarget)
+    ) {
       openURLScheme(url, background: options.background)
     }
     exit(0)
@@ -486,7 +574,10 @@ func main() {
     if let file = options.dojsFile {
       params["file"] = file
     }
-    if let url = buildURLScheme(command: "do", parameters: params) {
+    if let url = buildURLScheme(
+      command: "do",
+      parameters: parametersWithSuccess(params, successTarget: options.successTarget)
+    ) {
       openURLScheme(url, background: options.background)
     }
     exit(0)
@@ -495,17 +586,25 @@ func main() {
   // Handle file or STDIN
   if let filePath = options.filePath {
     // File path provided
-    handleFile(filePath, raise: options.raise, background: options.background)
+    handleFile(
+      filePath,
+      raise: options.raise,
+      background: options.background,
+      successTarget: options.successTarget
+    )
   } else if options.useStdin || options.stream {
     // STDIN or explicit stream request
     if options.stream && !options.useStdin {
       // Just open stream window without reading stdin
-      if let url = buildURLScheme(command: "stream") {
+      if let url = buildURLScheme(
+        command: "stream",
+        parameters: parametersWithSuccess([:], successTarget: options.successTarget)
+      ) {
         openURLScheme(url, background: options.background)
       }
     } else {
       // Read from STDIN and open stream
-      handleSTDIN(background: options.background)
+      handleSTDIN(background: options.background, successTarget: options.successTarget)
     }
   } else {
     // Default behavior: check if stdin has data
@@ -516,7 +615,7 @@ func main() {
       exit(0)
     } else {
       // Has input, use STDIN
-      handleSTDIN(background: options.background)
+      handleSTDIN(background: options.background, successTarget: options.successTarget)
     }
   }
 }
