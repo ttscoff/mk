@@ -55,6 +55,7 @@ struct CommandOptions {
   var dojs: String?
   var dojsFile: String? = nil  // Optional file target for --dojs
   var raise: Bool = false
+  var background: Bool = false
   var showUsage: Bool = false
   var showVersion: Bool = false
 }
@@ -98,6 +99,8 @@ func parseArguments() -> CommandOptions {
       options.paste = true
     case "--raise":
       options.raise = true
+    case "-g", "--background":
+      options.background = true
     case "--preview":
       if i + 1 < args.count {
         options.preview = args[i + 1]
@@ -191,13 +194,29 @@ func buildURLScheme(command: String, parameters: [String: String] = [:]) -> URL?
   return URL(string: urlString)
 }
 
-func openURLScheme(_ url: URL) {
-  NSWorkspace.shared.open(url)
+func openURLScheme(_ url: URL, background: Bool = false) {
+  if background {
+    let config = NSWorkspace.OpenConfiguration()
+    config.activates = false
+    let semaphore = DispatchSemaphore(value: 0)
+    var openError: Error?
+    NSWorkspace.shared.open(url, configuration: config) { _, error in
+      openError = error
+      semaphore.signal()
+    }
+    semaphore.wait()
+    if let openError {
+      fputs("Error: Could not open URL scheme: \(openError.localizedDescription)\n", stderr)
+      exit(1)
+    }
+  } else {
+    NSWorkspace.shared.open(url)
+  }
 }
 
 // MARK: - STDIN Handling
 
-func handleSTDIN() {
+func handleSTDIN(background: Bool = false) {
   guard let data = try? FileHandle.standardInput.readToEnd() as NSData?,
     let dataString = String(data: data as Data, encoding: .utf8)
   else {
@@ -211,7 +230,7 @@ func handleSTDIN() {
 
   // Open streaming preview
   if let streamURL = buildURLScheme(command: "stream") {
-    openURLScheme(streamURL)
+    openURLScheme(streamURL, background: background)
   }
 }
 
@@ -235,7 +254,7 @@ func effectiveWorkingDirectory() -> String {
 
 // MARK: - File Handling
 
-func handleFile(_ filePath: String, raise: Bool = false) {
+func handleFile(_ filePath: String, raise: Bool = false, background: Bool = false) {
   let fileManager = FileManager.default
 
   // Resolve path (handles ~, relative paths, etc.)
@@ -268,7 +287,7 @@ func handleFile(_ filePath: String, raise: Bool = false) {
     exit(1)
   }
 
-  openURLScheme(openURL)
+  openURLScheme(openURL, background: background)
 }
 
 // MARK: - Command Handlers
@@ -298,6 +317,7 @@ func showUsage() {
       --dingus          Open Markdown Dingus
       --paste           Create new document from clipboard
       --raise           Raise window after opening (use with file argument)
+      -g, --background  Deliver command without bringing Marked to the foreground
       --preview TEXT    Preview text directly in a new document
       --extract URL     Extract content from URL and open in Marked
       --stylestealer    Open Style Stealer HUD (optionally with URL)
@@ -314,6 +334,7 @@ func showUsage() {
       mk -                          Stream from STDIN (explicit)
       mk --stream                   Open streaming preview
       mk --refresh                  Refresh all previews
+      mk --background --refresh all Refresh without focusing Marked
       mk --pref                     Open preferences
       mk --dingus                   Open Markdown Dingus
       mk --preview "Hello **world**" Preview text directly
@@ -354,7 +375,7 @@ func main() {
     // If refreshFile is empty string, no params = refresh frontmost
 
     if let url = buildURLScheme(command: "refresh", parameters: params) {
-      openURLScheme(url)
+      openURLScheme(url, background: options.background)
     }
     exit(0)
   }
@@ -369,35 +390,35 @@ func main() {
     // If empty, params stays empty and app defaults to "General"
 
     if let url = buildURLScheme(command: "pref", parameters: params) {
-      openURLScheme(url)
+      openURLScheme(url, background: options.background)
     }
     exit(0)
   }
 
   if options.dingus {
     if let url = buildURLScheme(command: "dingus") {
-      openURLScheme(url)
+      openURLScheme(url, background: options.background)
     }
     exit(0)
   }
 
   if options.paste {
     if let url = buildURLScheme(command: "paste") {
-      openURLScheme(url)
+      openURLScheme(url, background: options.background)
     }
     exit(0)
   }
 
   if let previewText = options.preview {
     if let url = buildURLScheme(command: "preview", parameters: ["text": previewText]) {
-      openURLScheme(url)
+      openURLScheme(url, background: options.background)
     }
     exit(0)
   }
 
   if let extractURL = options.extract {
     if let url = buildURLScheme(command: "extract", parameters: ["url": extractURL]) {
-      openURLScheme(url)
+      openURLScheme(url, background: options.background)
     }
     exit(0)
   }
@@ -408,7 +429,7 @@ func main() {
       params["url"] = stylestealerURL
     }
     if let url = buildURLScheme(command: "stylestealer", parameters: params) {
-      openURLScheme(url)
+      openURLScheme(url, background: options.background)
     }
     exit(0)
   }
@@ -419,7 +440,7 @@ func main() {
       params["url"] = importurlURL
     }
     if let url = buildURLScheme(command: "importurl", parameters: params) {
-      openURLScheme(url)
+      openURLScheme(url, background: options.background)
     }
     exit(0)
   }
@@ -448,14 +469,14 @@ func main() {
     params["name"] = nameWithoutExt
 
     if let url = buildURLScheme(command: "addstyle", parameters: params) {
-      openURLScheme(url)
+      openURLScheme(url, background: options.background)
     }
     exit(0)
   }
 
   if !options.defaultsPairs.isEmpty {
     if let url = buildURLScheme(command: "defaults", parameters: options.defaultsPairs) {
-      openURLScheme(url)
+      openURLScheme(url, background: options.background)
     }
     exit(0)
   }
@@ -466,7 +487,7 @@ func main() {
       params["file"] = file
     }
     if let url = buildURLScheme(command: "do", parameters: params) {
-      openURLScheme(url)
+      openURLScheme(url, background: options.background)
     }
     exit(0)
   }
@@ -474,17 +495,17 @@ func main() {
   // Handle file or STDIN
   if let filePath = options.filePath {
     // File path provided
-    handleFile(filePath, raise: options.raise)
+    handleFile(filePath, raise: options.raise, background: options.background)
   } else if options.useStdin || options.stream {
     // STDIN or explicit stream request
     if options.stream && !options.useStdin {
       // Just open stream window without reading stdin
       if let url = buildURLScheme(command: "stream") {
-        openURLScheme(url)
+        openURLScheme(url, background: options.background)
       }
     } else {
       // Read from STDIN and open stream
-      handleSTDIN()
+      handleSTDIN(background: options.background)
     }
   } else {
     // Default behavior: check if stdin has data
@@ -495,7 +516,7 @@ func main() {
       exit(0)
     } else {
       // Has input, use STDIN
-      handleSTDIN()
+      handleSTDIN(background: options.background)
     }
   }
 }

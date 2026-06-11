@@ -85,6 +85,10 @@ mk -
 * __`mk [file]`__ - Open a markdown file in Marked
 * __`mk [file] --raise`__ - Open file and raise the window
   above all others
+* __`mk -g`__ or __`mk --background`__ - Deliver the command
+  without bringing Marked to the foreground (equivalent to
+  `open -g`). Works best with `--refresh`, `--defaults`, and
+  `--dojs` on documents already open in Marked.
 
 #### STDIN and Streaming
 
@@ -176,6 +180,9 @@ grep -i "important" notes.md | mk
 # Refresh all previews
 mk --refresh all
 
+# Refresh without focusing Marked
+mk --background --refresh all
+
 # Add a custom style
 mk --add-style ~/Documents/MyTheme.css
 
@@ -235,6 +242,7 @@ Add to your `~/.zshrc` or `~/.bash_profile`:
 ```bash
 alias mko='mk --raise'  # Open with raise
 alias mkr='mk --refresh all'  # Refresh all
+alias mkrb='mk --background --refresh all'  # Refresh in background
 ```
 
 ### Scripts
