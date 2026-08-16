@@ -37,7 +37,7 @@ let MK_VERSION = getVersion()
 // MARK: - Argument Parsing
 
 struct CommandOptions {
-  var filePath: String?
+  var filePaths: [String] = []
   var useStdin: Bool = false
   var stream: Bool = false
   var refreshFile: String? = nil  // nil = frontmost, "all" = all windows, or file path
@@ -172,9 +172,7 @@ func parseArguments() -> CommandOptions {
     default:
       // If it doesn't start with -, it's a positional argument (file path or URL)
       if !arg.hasPrefix("-") {
-        if options.filePath == nil {
-          options.filePath = arg
-        }
+        options.filePaths.append(arg)
       }
     }
     i += 1
@@ -300,35 +298,36 @@ func effectiveWorkingDirectory() -> String {
 
 // MARK: - File Handling
 
-func handleFile(
-  _ filePath: String,
+func resolveFilePath(_ filePath: String) -> String {
+  var resolvedPath = filePath
+  if filePath.hasPrefix("~") {
+    resolvedPath = (filePath as NSString).expandingTildeInPath
+  } else if !filePath.hasPrefix("/") {
+    let currentDir = effectiveWorkingDirectory()
+    resolvedPath = (currentDir as NSString).appendingPathComponent(filePath)
+  }
+  return (resolvedPath as NSString).standardizingPath
+}
+
+func handleFiles(
+  _ filePaths: [String],
   raise: Bool = false,
   background: Bool = false,
   successTarget: String? = nil
 ) {
   let fileManager = FileManager.default
+  var resolvedPaths: [String] = []
 
-  // Resolve path (handles ~, relative paths, etc.)
-  var resolvedPath = filePath
-  if filePath.hasPrefix("~") {
-    resolvedPath = (filePath as NSString).expandingTildeInPath
-  } else if !filePath.hasPrefix("/") {
-    // Relative path - make it absolute from effective working directory
-    let currentDir = effectiveWorkingDirectory()
-    resolvedPath = (currentDir as NSString).appendingPathComponent(filePath)
+  for filePath in filePaths {
+    let resolvedPath = resolveFilePath(filePath)
+    if !fileManager.fileExists(atPath: resolvedPath) {
+      fputs("Error: File does not exist: \(resolvedPath)\n", stderr)
+      exit(1)
+    }
+    resolvedPaths.append(resolvedPath)
   }
 
-  // Standardize path
-  resolvedPath = (resolvedPath as NSString).standardizingPath
-
-  // Check if file exists
-  if !fileManager.fileExists(atPath: resolvedPath) {
-    fputs("Error: File does not exist: \(resolvedPath)\n", stderr)
-    exit(1)
-  }
-
-  // Build URL with file parameter
-  var parameters: [String: String] = ["file": resolvedPath]
+  var parameters: [String: String] = ["file": resolvedPaths.joined(separator: ",")]
   if raise {
     parameters["raise"] = "true"
   }
@@ -584,10 +583,9 @@ func main() {
   }
 
   // Handle file or STDIN
-  if let filePath = options.filePath {
-    // File path provided
-    handleFile(
-      filePath,
+  if !options.filePaths.isEmpty {
+    handleFiles(
+      options.filePaths,
       raise: options.raise,
       background: options.background,
       successTarget: options.successTarget
